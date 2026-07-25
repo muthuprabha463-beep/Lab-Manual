@@ -1,4 +1,350 @@
-public boolean updateStudent(Student student) {
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+
+/**
+ * DBConnection.java
+ * Centralized JDBC connection utility.
+ * Update the URL, USER, and PASSWORD to match your local MySQL setup.
+ */
+public class DBConnection {
+
+    private static final String URL =
+            "jdbc:mysql://localhost:3306/student_db?useSSL=false&serverTimezone=UTC";
+    private static final String USER = "root";
+    private static final String PASSWORD = "your_password_here";
+
+    // Prevent instantiation
+    private DBConnection() {
+    }
+
+    public static Connection getConnection() throws SQLException {
+        try {
+            // Not strictly required with modern JDBC 4+ drivers (auto-loaded via SPI),
+            // but kept for clarity / compatibility with older setups.
+            Class.forName("com.mysql.cj.jdbc.Driver");
+        } catch (ClassNotFoundException e) {
+            throw new SQLException("MySQL JDBC Driver not found. Add mysql-connector-j to your classpath.", e);
+        }
+        return DriverManager.getConnection(URL, USER, PASSWORD);
+    }
+}
+
+
+
+
+README
+
+# Student Database Management System (Java + JDBC)
+
+A console-based CRUD application for managing student records, backed by MySQL.
+
+## Project structure
+```
+StudentDBMS/
+├── schema.sql              -- run this in MySQL first
+├── src/
+│   ├── Student.java         -- model class
+│   ├── DBConnection.java    -- JDBC connection helper
+│   ├── StudentDAO.java      -- CRUD logic (Create, Read, Update, Delete)
+│   └── StudentDBMSApp.java  -- console menu / main class
+```
+
+## 1. Set up the database
+Open MySQL and run:
+```
+mysql -u root -p < schema.sql
+```
+or paste the contents of `schema.sql` into your MySQL client / Workbench.
+
+## 2. Get the JDBC driver
+Download **MySQL Connector/J** (the `mysql-connector-j-<version>.jar` file) from:
+https://dev.mysql.com/downloads/connector/j/
+
+## 3. Configure credentials
+Edit `src/DBConnection.java` and update:
+```java
+private static final String URL  = "jdbc:mysql://localhost:3306/student_db?useSSL=false&serverTimezone=UTC";
+private static final String USER = "root";
+private static final String PASSWORD = "your_password_here";
+```
+
+## 4. Compile
+```
+cd StudentDBMS
+javac -d bin src/*.java
+```
+
+## 5. Run
+Include the connector jar on the classpath:
+
+**Linux / macOS**
+```
+java -cp "bin:mysql-connector-j-9.x.x.jar" StudentDBMSApp
+```
+
+**Windows**
+```
+java -cp "bin;mysql-connector-j-9.x.x.jar" StudentDBMSApp
+```
+
+## Features (CRUD)
+| Operation | Menu option | Description |
+|---|---|---|
+| Create | 1 | Add a new student record |
+| Read   | 2 | View all students |
+| Read   | 3 | View a single student by ID |
+| Read   | 4 | Search students by (partial) name |
+| Update | 5 | Update an existing student's details |
+| Delete | 6 | Delete a student by ID |
+
+## Notes
+- Uses `PreparedStatement` everywhere to prevent SQL injection.
+- `DBConnection` opens a fresh connection per operation and each DAO method
+  closes it via try-with-resources — simple and safe for a learning project.
+  For a production app, you'd typically use a connection pool (e.g., HikariCP).
+- Feel free to extend: add pagination, sorting, export-to-CSV, or a Swing/JavaFX GUI on top of the same `StudentDAO`.
+
+
+
+
+SCHEMA
+
+-- ============================================
+-- Student Database Management System
+-- Database schema setup script
+-- Run this in MySQL before running the Java app
+-- ============================================
+
+CREATE DATABASE IF NOT EXISTS student_db;
+USE student_db;
+
+CREATE TABLE IF NOT EXISTS students (
+    id          INT AUTO_INCREMENT PRIMARY KEY,
+    name        VARCHAR(100) NOT NULL,
+    age         INT NOT NULL,
+    course      VARCHAR(100) NOT NULL,
+    email       VARCHAR(100) UNIQUE,
+    marks       DOUBLE
+);
+
+-- Optional sample data
+INSERT INTO students (name, age, course, email, marks) VALUES
+('Aditi Rao', 20, 'Computer Science', 'aditi.rao@example.com', 88.5),
+('Rohan Mehta', 21, 'Electronics', 'rohan.mehta@example.com', 75.0);
+
+
+
+STUDENT
+
+/**
+ * Student.java
+ * Model class representing a single student record.
+ * Maps directly to a row in the "students" table.
+ */
+public class Student {
+
+    private int id;
+    private String name;
+    private int age;
+    private String course;
+    private String email;
+    private double marks;
+
+    public Student() {
+    }
+
+    public Student(String name, int age, String course, String email, double marks) {
+        this.name = name;
+        this.age = age;
+        this.course = course;
+        this.email = email;
+        this.marks = marks;
+    }
+
+    public Student(int id, String name, int age, String course, String email, double marks) {
+        this.id = id;
+        this.name = name;
+        this.age = age;
+        this.course = course;
+        this.email = email;
+        this.marks = marks;
+    }
+
+    // ---------- Getters & Setters ----------
+
+    public int getId() {
+        return id;
+    }
+
+    public void setId(int id) {
+        this.id = id;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public int getAge() {
+        return age;
+    }
+
+    public void setAge(int age) {
+        this.age = age;
+    }
+
+    public String getCourse() {
+        return course;
+    }
+
+    public void setCourse(String course) {
+        this.course = course;
+    }
+
+    public String getEmail() {
+        return email;
+    }
+
+    public void setEmail(String email) {
+        this.email = email;
+    }
+
+    public double getMarks() {
+        return marks;
+    }
+
+    public void setMarks(double marks) {
+        this.marks = marks;
+    }
+
+    @Override
+    public String toString() {
+        return String.format(
+                "ID: %-4d | Name: %-20s | Age: %-3d | Course: %-20s | Email: %-25s | Marks: %.2f",
+                id, name, age, course, email, marks
+        );
+    }
+}
+
+
+
+
+
+StudentDAO
+
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * StudentDAO.java
+ * Data Access Object encapsulating all CRUD (Create, Read, Update, Delete)
+ * operations for the "students" table. Uses PreparedStatement throughout
+ * to prevent SQL injection.
+ */
+public class StudentDAO {
+
+    // ---------------- CREATE ----------------
+    public boolean addStudent(Student student) {
+        String sql = "INSERT INTO students (name, age, course, email, marks) VALUES (?, ?, ?, ?, ?)";
+
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
+
+            ps.setString(1, student.getName());
+            ps.setInt(2, student.getAge());
+            ps.setString(3, student.getCourse());
+            ps.setString(4, student.getEmail());
+            ps.setDouble(5, student.getMarks());
+
+            int rows = ps.executeUpdate();
+
+            if (rows > 0) {
+                try (ResultSet keys = ps.getGeneratedKeys()) {
+                    if (keys.next()) {
+                        student.setId(keys.getInt(1));
+                    }
+                }
+                return true;
+            }
+            return false;
+
+        } catch (SQLException e) {
+            System.err.println("Error adding student: " + e.getMessage());
+            return false;
+        }
+    }
+
+    // ---------------- READ (all) ----------------
+    public List<Student> getAllStudents() {
+        List<Student> students = new ArrayList<>();
+        String sql = "SELECT * FROM students ORDER BY id";
+
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+
+            while (rs.next()) {
+                students.add(mapRow(rs));
+            }
+
+        } catch (SQLException e) {
+            System.err.println("Error fetching students: " + e.getMessage());
+        }
+        return students;
+    }
+
+    // ---------------- READ (by id) ----------------
+    public Student getStudentById(int id) {
+        String sql = "SELECT * FROM students WHERE id = ?";
+
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+
+            ps.setInt(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return mapRow(rs);
+                }
+            }
+
+        } catch (SQLException e) {
+            System.err.println("Error fetching student: " + e.getMessage());
+        }
+        return null; // not found
+    }
+
+    // ---------------- READ (search by name, partial match) ----------------
+    public List<Student> searchByName(String name) {
+        List<Student> students = new ArrayList<>();
+        String sql = "SELECT * FROM students WHERE name LIKE ? ORDER BY id";
+
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+
+            ps.setString(1, "%" + name + "%");
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    students.add(mapRow(rs));
+                }
+            }
+
+        } catch (SQLException e) {
+            System.err.println("Error searching students: " + e.getMessage());
+        }
+        return students;
+    }
+
+    // ---------------- UPDATE ----------------
+    public boolean updateStudent(Student student) {
         String sql = "UPDATE students SET name = ?, age = ?, course = ?, email = ?, marks = ? WHERE id = ?";
 
         try (Connection conn = DBConnection.getConnection();
